@@ -25,6 +25,7 @@ import {
   Pixels,
   Filter,
   Queue,
+  TabsPackage,
 } from './types';
 
 import {
@@ -47,12 +48,14 @@ let videoElement: VideoElement;
 let canvasElement: CanvasElement;
 let canvasRenderingContext: CanvasRenderingContext2D;
 let errorLogger: ErrorLogger;
+let tabsPackage: TabsPackage;
 
 const pixels: Pixels = [];
 const temporaryPixels: Pixels = [];
 // eslint-disable-next-line @typescript-eslint/no-use-before-define
 let filter: Filter = copy_image;
 
+let toRunLateQueue: boolean = false;
 let videoIsPlaying: boolean = false;
 
 let FPS: number = DEFAULT_FPS;
@@ -192,19 +195,11 @@ function draw(timestamp: number): void {
   if (elapsed > 1000 / FPS) {
     drawFrame();
     startTime = timestamp;
-
-    if (numberOfFrames > 0) {
-      if (numberOfFrames === 1) {
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        stopVideo();
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        // deinit();
-        // eslint-disable-next-line no-console
-        console.log('Disabling video');
-      }
-      numberOfFrames -= 1;
+    if (toRunLateQueue) {
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define
+      lateQueue();
+      toRunLateQueue = false;
     }
-    incrementRenderCount();
   }
 }
 
@@ -222,9 +217,7 @@ function startVideo(): void {
  * @hidden
  */
 function stopVideo(): void {
-  if (!videoIsPlaying) {
-    return;
-  }
+  if (!videoIsPlaying) return;
   videoIsPlaying = false;
   window.cancelAnimationFrame(requestId);
 }
@@ -245,6 +238,7 @@ function loadMedia(): void {
     .getUserMedia({ video: true })
     .then((stream) => {
       videoElement.srcObject = stream;
+      toRunLateQueue = true;
     })
     .catch((error) => {
       const errorMessage = `${error.name}: ${error.message}`;
@@ -326,10 +320,23 @@ function updateDimensions(w: number, h: number): void {
   startVideo();
 }
 
+// queue is runned when init is called
 let queue: Queue = () => {};
 
 // adds function to the queue
 function enqueue(funcToAdd: Queue): void {
+  const funcToRunFirst: Queue = queue;
+  queue = () => {
+    funcToRunFirst();
+    funcToAdd();
+  };
+}
+
+// lateQueue is runned after media has properly loaded
+let lateQueue: Queue = () => {};
+
+// adds function to the lateQueue
+function lateEnqueue(funcToAdd: Queue): void {
   const funcToRunFirst: Queue = queue;
   queue = () => {
     funcToRunFirst();
@@ -346,13 +353,15 @@ function enqueue(funcToAdd: Queue): void {
 function init(
   video: VideoElement,
   canvas: CanvasElement,
-  _errorLogger: ErrorLogger
+  _errorLogger: ErrorLogger,
+  _tabsPackage: TabsPackage
 ): number[] {
   // eslint-disable-next-line no-console
   console.log('Initialising', randID);
   videoElement = video;
   canvasElement = canvas;
   errorLogger = _errorLogger;
+  tabsPackage = _tabsPackage;
   const context = canvasElement.getContext('2d');
   if (context == null) throw new Error('Canvas context should not be null.');
   canvasRenderingContext = context;
@@ -548,13 +557,15 @@ export function compose_filter(filter1: Filter, filter2: Filter): Filter {
 }
 
 /**
- * Takes a snapshot of image after a set delay.
+ * Pauses the video after a set delay.
  *
- * @param delay Delay in ms before a snapshot is taken
+ * @param delay Delay in ms after the video starts.
  */
-export function snapshot(delay: number): void {
+export function pause_at(delay: number): void {
   // prevent negative delays
-  enqueue(() => setTimeout(stopVideo, delay >= 0 ? delay : -delay));
+  lateEnqueue(() =>
+    setTimeout(tabsPackage.onClickStill, delay >= 0 ? delay : -delay)
+  );
 }
 
 /**
